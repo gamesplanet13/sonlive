@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>SonLive</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1018;--panel:#171d2a;--line:#293347;--text:#eef3ff;--muted:#a2adc4;--blue:#a5baff;--red:#ff8896;--green:#80e3b6}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:17px 20px;border-bottom:1px solid var(--line)}h1{font-size:24px;margin:0;letter-spacing:-.6px}h2{font-size:14px;margin:0;color:var(--muted);font-weight:650}main{max-width:1440px;margin:auto;padding:14px;display:grid;gap:12px}.monitors,.panels{display:grid;grid-template-columns:1fr 1fr;gap:12px}.panels{grid-template-columns:.8fr 1.3fr 1fr}.card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:12px;min-width:0}.card>h2{margin-bottom:9px}.program{border-color:#8b4654}.program h2{color:var(--red)}canvas,.feed{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#070910;border-radius:7px}.preview canvas{touch-action:none}.tools,.row,.heading{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.heading{justify-content:space-between;margin-bottom:8px}.row{padding:7px 0;border-top:1px solid var(--line)}.row .name{flex:1;min-width:70px;overflow-wrap:anywhere}.list{display:grid;gap:4px}button,input,select{background:#232d41;color:var(--text);border:1px solid #35425c;border-radius:8px;padding:8px 10px;font:inherit;max-width:100%;min-width:0}button{cursor:pointer}button:disabled{opacity:.44;cursor:default}button[aria-pressed=true],.primary{background:var(--blue);border-color:var(--blue);color:#10172d;font-weight:700}.recording{color:var(--red);border-color:var(--red)}input[type=range]{padding:0;accent-color:var(--blue);width:100%}.field{display:grid;gap:3px;font-size:12px;color:var(--muted);min-width:0}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:9px}.meta,#message{font-size:13px;color:var(--muted);margin:0;overflow-wrap:anywhere}.good{color:var(--green)}.meter{height:6px;border-radius:6px;background:#27334a;overflow:hidden;margin:8px 0}.meter i{display:block;height:100%;width:0;background:var(--green)}dialog{max-width:95vw;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}dialog::backdrop{background:#000a}#remoteLink{width:min(480px,80vw);display:block;margin:12px 0}#addType{min-width:105px}#status{font-size:12px}.selected{color:var(--blue)}@media(max-width:800px){.panels{grid-template-columns:1fr 1fr}.audio{grid-column:1/-1}}@media(max-width:530px){main{padding:8px;gap:8px}.monitors,.panels{gap:8px}.panels{grid-template-columns:1fr}.card{padding:9px}.audio{grid-column:auto}header{padding:12px}.tools{gap:5px}button{padding:7px 8px}}
+.pip header,.pip main>.tools,.pip .panels,.pip .preview,.pip .program h2{display:none}.pip main,.pip .program{padding:0;border:0;border-radius:0}.pip .monitors{display:block}.pip canvas{border-radius:0}
+</style></head><body>
+<header><div><h1>SonLive</h1><p class="meta" id="mode"></p></div><div class="tools"><span id="status"></span><button id="pip">Mini player</button><button id="pair">Remote link</button></div></header>
+<main>
+<div class="monitors">
+<section class="card preview"><h2>Preview</h2><canvas id="pv" width="1280" height="720"></canvas><img class="feed" id="pvFeed" alt="Preview output" hidden></section>
+<section class="card program"><h2>Program</h2><canvas id="pg" width="1280" height="720"></canvas><img class="feed" id="pgFeed" alt="Program output" hidden></section>
+</div>
+<div class="card tools"><label>Transition <select id="transition"><option value="cut">Cut</option><option value="fade">Fade</option></select></label><button id="take" class="primary">Take to program</button><button id="record">Start recording</button><span id="message" role="status"></span></div>
+<div class="panels">
+<section class="card"><div class="heading"><h2>Scenes</h2><button id="addScene">+ Scene</button></div><div class="list" id="scenes"></div></section>
+<section class="card"><div class="heading"><h2>Sources</h2><div class="tools"><select id="addType" aria-label="Source type"><option value="text">Text</option><option value="color">Color</option><option value="image">Image</option><option value="video">Video</option><option value="camera">Camera</option><option value="screen">Screen / gameplay</option></select><button id="addSource">+ Add</button></div></div><div id="sources"></div><div class="grid" id="properties"></div></section>
+<section class="card audio"><h2>Audio mixer</h2><div class="row"><span class="name">Microphone</span><button id="mic">Enable</button><button id="mute">Mute</button></div><div class="meter" aria-label="Microphone level"><i id="level"></i></div><label class="field">Mic volume<input id="volume" aria-label="Mic volume" type="range" min="0" max="100" value="100"></label></section>
+</div></main>
+<input type="file" id="media" hidden>
+<dialog id="remoteDialog"><h2>SonLive Remote</h2><p>Open this link on another device on the same Wi-Fi.</p><input id="remoteLink" readonly aria-label="Remote link"><div class="tools"><button id="copy" class="primary">Copy link</button><button id="closeDialog">Close</button></div></dialog>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const remote = location.pathname === '/remote';
+const key = location.hash.slice(1);
+const android = window.StudioDevice;
+const id = () => Array.from(crypto.getRandomValues(new Uint32Array(2)), n => n.toString(36)).join('');
+const freshScene = name => ({id:id(), name, sources:[]});
+const first = freshScene('Scene 1');
+const makeState = () => ({scenes:[first], preview:first.id, program:first.id, selected:null, transition:'cut', volume:100, muted:false});
+let s = makeState();
+if (!remote) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('sonlive'));
+    if (saved?.scenes?.length) s = saved;
+  } catch (error) { console.warn(error); }
+}
+const devices = new Map();
+const urls = new Map();
+let db, screenImage, fading, recorder, audio, mic, gain, analyser, meterData;
+let level = 0, recording = false, saving = false, syncSignature = '', statusTime = 0, currentError = '';
+const frameCanvas = document.createElement('canvas');
+frameCanvas.width = 480; frameCanvas.height = 270;
+const api = (path, method='GET', body) => fetch(path,{method,body,headers:{'X-Studio-Key':key},cache:'no-store',signal:AbortSignal.timeout(2500)});
+const scene = which => s.scenes.find(item => item.id === s[which]);
+const source = () => scene('preview')?.sources.find(item => item.id === s.selected);
+const safeText = value => String(value ?? '').slice(0,500);
+const nameText = value => safeText(value).trim().slice(0,65);
+function report(text) { currentError = text; $('message').textContent = text; }
+function save() {
+  if (remote) return;
+  try {
+    const {scenes,preview,program,selected,transition,volume,muted} = s;
+    localStorage.setItem('sonlive', JSON.stringify({scenes,preview,program,selected,transition,volume,muted}));
+  } catch (error) { report('Could not save project settings.'); }
+}
+function button(label, action, pressed) {
+  const node = document.createElement('button');
+  node.textContent = label;
+  node.onclick = action;
+  if (pressed !== undefined) node.setAttribute('aria-pressed',pressed);
+  return node;
+}
+function row(name) {
+  const node = document.createElement('div');
+  node.className = 'row';
+  const label = document.createElement('span');
+  label.className = 'name';
+  label.textContent = name;
+  node.append(label);
+  return node;
+}
+function field(label, prop, type, value, min, max) {
+  const box = document.createElement('label');
+  box.className = 'field';
+  box.textContent = label;
+  const input = document.createElement('input');
+  input.type = type;
+  if (min !== undefined) { input.min = min; input.max = max; }
+  input.value = value;
+  const sourceId = s.selected;
+  input.onchange = () => send({op:'property', id:sourceId, prop, value:input.value});
+  box.append(input);
+  return box;
+}
+function render() {
+  $('scenes').replaceChildren(...s.scenes.map(item => {
+    const line = row(item.name + (item.id === s.program ? ' · Program' : ''));
+    line.append(button('Preview',() => send({op:'scene',id:item.id}),item.id === s.preview));
+    line.append(button('Rename',() => {
+      const value = prompt('Scene name', item.name);
+      if (value?.trim()) send({op:'rename',id:item.id,value});
+    }));
+    if (s.scenes.length > 1) line.append(button('Delete',() => {
+      if (confirm('Delete ' + item.name + '?')) send({op:'deleteScene',id:item.id});
+    }));
+    return line;
+  }));
+  $('sources').replaceChildren(...[...(scene('preview')?.sources || [])].reverse().map(item => {
+    const line = row(item.name);
+    line.append(button('Edit',() => send({op:'select',id:item.id}),item.id === s.selected));
+    line.append(button(item.visible ? 'Hide' : 'Show',() => send({op:'visibility',id:item.id})));
+    for (const [label,delta] of [['↑',1],['↓',-1]]) {
+      const control = button(label,() => send({op:'order',id:item.id,delta}));
+      control.title = delta > 0 ? 'Raise layer' : 'Lower layer';
+      line.append(control);
+    }
+    line.append(button('Remove',() => send({op:'remove',id:item.id})));
+    return line;
+  }));
+  const current = source();
+  const props = $('properties');
+  props.replaceChildren();
+  if (current) {
+    props.append(field('Name','name','text',current.name),
+      field('Opacity %','opacity','number',current.opacity,0,100),
+      field('X %','x','number',current.x,-100,100),
+      field('Y %','y','number',current.y,-100,100),
+      field('Width %','w','number',current.w,1,200),
+      field('Height %','h','number',current.h,1,200));
+    if (current.type === 'text') props.append(field('Text','text','text',current.text),field('Size','size','number',current.size,12,300));
+    if (['text','color'].includes(current.type)) props.append(field('Color','color','color',current.color));
+    if (current.type === 'camera') {
+      const camera = document.createElement('select');
+      camera.setAttribute('aria-label','Camera facing');
+      for (const [value,label] of [['environment','Rear camera'],['user','Front camera']]) camera.add(new Option(label,value));
+      camera.value = current.facing;
+      camera.onchange = () => send({op:'property',id:current.id,prop:'facing',value:camera.value});
+      props.append(camera,button('Start camera',() => send({op:'activate',id:current.id})));
+    }
+    if (current.type === 'screen') {
+      props.append(button('Start capture',() => send({op:'activate',id:current.id})),
+        button('Stop capture',() => send({op:'stopScreen'})));
+    }
+  }
+  $('transition').value = s.transition;
+  if (document.activeElement !== $('volume')) $('volume').value = s.volume;
+  $('mute').textContent = s.muted ? 'Unmute' : 'Mute';
+  $('mic').textContent = (remote ? s.mic : mic) ? 'Disable' : 'Enable';
+  const active = remote ? s.recording : recording;
+  $('record').textContent = active ? 'Stop recording' : 'Start recording';
+  $('record').classList.toggle('recording',!!active);
+}
+async function send(command) {
+  if (!remote) { await apply(command); return; }
+  try { if (!(await api('/command','POST',JSON.stringify(command))).ok) throw new Error(); }
+  catch (error) { report('Remote command could not reach SonLive.'); }
+}
+async function database() {
+  return new Promise((resolve,reject) => {
+    const open = indexedDB.open('sonlive-media',1);
+    open.onupgradeneeded = () => open.result.createObjectStore('files');
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+}
+async function mediaFile(item, file) {
+  if (!db) db = await database();
+  if (file) await new Promise((resolve,reject) => {
+    const tx = db.transaction('files','readwrite');
+    tx.objectStore('files').put(file,item.id);
+    tx.oncomplete = resolve;
+    tx.onerror = tx.onabort = () => reject(tx.error);
+  });
+  else file = await new Promise((resolve,reject) => {
+    const query = db.transaction('files').objectStore('files').get(item.id);
+    query.onsuccess = () => resolve(query.result);
+    query.onerror = () => reject(query.error);
+  });
+  if (!file) return;
+  urls.set(item.id,URL.createObjectURL(file));
+  const media = item.type === 'image' ? new Image() : document.createElement('video');
+  if (item.type === 'video') { media.loop = true; media.muted = true; media.playsInline = true; }
+  media.src = urls.get(item.id);
+  devices.set(item.id,media);
+  if (item.type === 'video') await media.play();
+}
+function release(item) {
+  const media = devices.get(item.id);
+  if (media instanceof HTMLVideoElement) {
+    media.pause();
+    media.srcObject?.getTracks().forEach(track => track.stop());
+    media.removeAttribute('src');
+    media.load();
+  }
+  if (urls.has(item.id)) URL.revokeObjectURL(urls.get(item.id));
+  urls.delete(item.id);
+  devices.delete(item.id);
+  if (db && ['video','image'].includes(item.type)) db.transaction('files','readwrite').objectStore('files').delete(item.id);
+}
+async function camera(item) {
+  if (!navigator.mediaDevices) throw new Error('Camera is unavailable on this device.');
+  release(item);
+  const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:item.facing},width:{ideal:1280}},audio:false});
+  if (!s.scenes.some(entry => entry.sources.includes(item))) { stream.getTracks().forEach(track => track.stop()); return; }
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = stream;
+  devices.set(item.id,video);
+  await video.play();
+}
+async function microphone() {
+  if (mic) { mic.getTracks().forEach(track => track.stop()); mic = null; level = 0; return; }
+  if (!navigator.mediaDevices) throw new Error('Microphone is unavailable.');
+  audio ||= new AudioContext();
+  await audio.resume();
+  mic = await navigator.mediaDevices.getUserMedia({audio:true});
+  const input = audio.createMediaStreamSource(mic);
+  gain ||= audio.createGain();
+  analyser ||= audio.createAnalyser();
+  if (!meterData) {
+    gain.connect(analyser);
+    meterData = new Uint8Array(analyser.fftSize);
+  }
+  input.connect(gain);
+  updateGain();
+}
+function updateGain() { if (gain) gain.gain.value = s.muted ? 0 : s.volume / 100; }
+async function record() {
+  if (saving || recorder?.state === 'inactive' && recording) return;
+  if (recording) { recorder.stop(); return; }
+  if (!window.MediaRecorder || !$('pg').captureStream) throw new Error('Recording is unavailable in this Android WebView.');
+  const stream = $('pg').captureStream(25);
+  let audioOutput;
+  if (gain) {
+    audioOutput = audio.createMediaStreamDestination();
+    gain.connect(audioOutput);
+    for (const track of audioOutput.stream.getAudioTracks()) stream.addTrack(track);
+  }
+  const chunks = [];
+  try {
+    recorder = new MediaRecorder(stream,{videoBitsPerSecond:3500000});
+    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(track => track.stop());
+      if (audioOutput) gain.disconnect(audioOutput);
+      recording = false;
+      saving = true;
+      render();
+      const blob = new Blob(chunks,{type:recorder.mimeType});
+      const extension = recorder.mimeType.includes('mp4') ? 'mp4' : 'webm';
+      if (android) {
+        try {
+          const name = 'SonLive-' + Date.now() + '.' + extension;
+          android.startSave(name,blob.type);
+          for (let offset=0;offset<blob.size;offset+=32768) {
+            const bytes = new Uint8Array(await blob.slice(offset,offset+32768).arrayBuffer());
+            android.saveChunk(btoa(String.fromCharCode(...bytes)));
+          }
+          if (!android.finishSave()) throw new Error();
+          report('Recording saved to Downloads.');
+        } catch (error) { report('Android could not save the recording.'); }
+      }
+      saving = false;
+    };
+    recorder.start(1000);
+    recording = true;
+  } catch (error) {
+    stream.getTracks().forEach(track => track.stop());
+    if (audioOutput) gain.disconnect(audioOutput);
+    throw error;
+  }
+}
+const numeric = {x:[-100,100],y:[-100,100],w:[1,200],h:[1,200],opacity:[0,100],size:[12,300]};
+const clamp = (value,min,max) => Math.max(min,Math.min(max,Number(value)||0));
+async function apply(c, file) {
+  const current = scene('preview');
+  const item = current.sources.find(entry => entry.id === c.id);
+  const target = s.scenes.find(entry => entry.id === c.id);
+  try {
+    switch(c.op) {
+      case 'scene': if (target) { s.preview = target.id; s.selected = null; } break;
+      case 'addScene': if (nameText(c.value) && s.scenes.length < 40) {
+        const next = freshScene(nameText(c.value));
+        s.scenes.push(next); s.preview = next.id; s.selected = null;
+      } break;
+      case 'rename': if (target && nameText(c.value)) target.name = nameText(c.value); break;
+      case 'deleteScene': if (target && s.scenes.length > 1) {
+        target.sources.forEach(release);
+        s.scenes = s.scenes.filter(entry => entry !== target);
+        if (s.preview === target.id) { s.preview = s.scenes[0].id; s.selected = null; }
+        if (s.program === target.id) s.program = s.scenes[0].id;
+      } break;
+      case 'take':
+        if (s.preview !== s.program && s.transition === 'fade') {
+          const image = document.createElement('canvas');
+          image.width=1280; image.height=720;
+          image.getContext('2d').drawImage($('pg'),0,0);
+          fading={image,start:performance.now()};
+        }
+        s.program = s.preview;
+        break;
+      case 'transition': s.transition = c.value === 'fade' ? 'fade' : 'cut'; break;
+      case 'add': {
+        if (!['text','color','image','video','camera','screen'].includes(c.type) ||
+            (['image','video'].includes(c.type) && !file) || current.sources.length >= 30) break;
+        const names = {text:'Text',color:'Color',image:'Image',video:'Video',camera:'Camera',screen:'Screen'};
+        const full = c.type === 'screen' || c.type === 'color';
+        const next = {id:id(),type:c.type,name:nameText(file?.name)||names[c.type],text:'SonLive',color:c.type==='color'?'#20335d':'#ffffff',facing:'environment',visible:true,opacity:100,x:full?0:8,y:full?0:8,w:full?100:52,h:full?100:38,size:64};
+        if (file) await mediaFile(next,file);
+        current.sources.push(next);
+        if (current.id === s.preview) s.selected = next.id;
+        if (c.type==='camera' && !c.fromRemote) await camera(next);
+        break;
+      }
+      case 'select': if (item) s.selected = item.id; break;
+      case 'visibility': if (item) item.visible = !item.visible; break;
+      case 'remove': if (item) {
+        release(item); current.sources = current.sources.filter(entry => entry !== item);
+        if (s.selected === item.id) s.selected = null;
+      } break;
+      case 'order': if (item && [-1,1].includes(c.delta)) {
+        const index = current.sources.indexOf(item), next = index+c.delta;
+        if (next>=0 && next<current.sources.length) [current.sources[index],current.sources[next]]=[current.sources[next],current.sources[index]];
+      } break;
+      case 'property': if (item) {
+        if (Object.hasOwn(numeric,c.prop)) item[c.prop]=clamp(c.value,...numeric[c.prop]);
+        if (c.prop==='name' && nameText(c.value)) item.name=nameText(c.value);
+        if (c.prop==='text') item.text=safeText(c.value);
+        if (c.prop==='color' && /^#[a-f\d]{6}$/i.test(c.value)) item.color=c.value;
+        if (c.prop==='facing' && ['environment','user'].includes(c.value)) {
+          item.facing=c.value;
+          if (devices.has(item.id)) await camera(item);
+        }
+      } break;
+      case 'activate': if (item?.type==='camera') await camera(item);
+        else if (item?.type==='screen') {
+          if (!android) throw new Error('Screen capture requires the SonLive Android app.');
+          android.screen(true);
+        } break;
+      case 'stopScreen': if (android) { android.screen(false); screenImage = null; } break;
+      case 'mic': await microphone(); break;
+      case 'mute': s.muted=!s.muted; updateGain(); break;
+      case 'volume': s.volume=clamp(c.value,0,100); updateGain(); break;
+      case 'record': await record(); break;
+    }
+  } catch (error) { report(error.message || 'Action failed.'); }
+  save();
+  render();
+}
+function draw(canvas, items) {
+  const ctx=canvas.getContext('2d'), width=canvas.width, height=canvas.height;
+  ctx.fillStyle='#070910'; ctx.fillRect(0,0,width,height);
+  for (const item of items || []) {
+    if (!item.visible || !item.opacity) continue;
+    const x=item.x*width/100, y=item.y*height/100, w=item.w*width/100, h=item.h*height/100;
+    ctx.save();
+    ctx.globalAlpha=item.opacity/100;
+    ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
+    if (item.type==='color') {
+      ctx.fillStyle=item.color; ctx.fillRect(x,y,w,h);
+    } else if (item.type==='text') {
+      ctx.font='700 '+item.size+'px system-ui'; ctx.fillStyle=item.color; ctx.textBaseline='top';
+      const words=item.text.split(/\s+/); let line='', top=y;
+      for (const word of words) {
+        const next=line ? line+' '+word : word;
+        if (line && ctx.measureText(next).width>w) { ctx.fillText(line,x,top,w); top+=item.size*1.18; line=word; }
+        else line=next;
+      }
+      if (line) ctx.fillText(line,x,top,w);
+    } else {
+      const media=item.type==='screen' ? screenImage : devices.get(item.id);
+      const mw=media?.videoWidth || media?.naturalWidth || media?.width;
+      const mh=media?.videoHeight || media?.naturalHeight || media?.height;
+      if (mw && mh && (!(media instanceof HTMLVideoElement) || media.readyState>=2)) {
+        const scale=Math.min(w/mw,h/mh);
+        ctx.drawImage(media,x+(w-mw*scale)/2,y+(h-mh*scale)/2,mw*scale,mh*scale);
+      }
+    }
+    ctx.restore();
+  }
+}
+function paint() {
+  draw($('pv'),scene('preview')?.sources);
+  draw($('pg'),scene('program')?.sources);
+  if (fading) {
+    const opacity=1-(performance.now()-fading.start)/350;
+    if (opacity<=0) fading=null;
+    else {
+      const context=$('pg').getContext('2d');
+      context.save(); context.globalAlpha=opacity; context.drawImage(fading.image,0,0); context.restore();
+    }
+  }
+  if (mic && analyser) {
+    analyser.getByteTimeDomainData(meterData);
+    const energy=meterData.reduce((sum,value)=>sum+((value-128)/128)**2,0)/meterData.length;
+    level=Math.min(100,Math.round(300*Math.sqrt(energy)));
+  }
+  $('level').style.width=level+'%';
+  requestAnimationFrame(paint);
+}
+const previewCanvas=$('pv');
+let drag;
+previewCanvas.onpointerdown=event => {
+  const item=source();
+  if (remote || !item?.visible) return;
+  const rect=previewCanvas.getBoundingClientRect();
+  const px=(event.clientX-rect.left)/rect.width*100, py=(event.clientY-rect.top)/rect.height*100;
+  if (px<item.x || px>item.x+item.w || py<item.y || py>item.y+item.h) return;
+  drag={item,startX: px-item.x,startY:py-item.y};
+  previewCanvas.setPointerCapture(event.pointerId);
+};
+previewCanvas.onpointermove=event => {
+  if (!drag) return;
+  const rect=previewCanvas.getBoundingClientRect();
+  drag.item.x=Math.round(clamp((event.clientX-rect.left)/rect.width*100-drag.startX,-100,100));
+  drag.item.y=Math.round(clamp((event.clientY-rect.top)/rect.height*100-drag.startY,-100,100));
+};
+previewCanvas.onpointerup=previewCanvas.onpointercancel=()=>{ if(drag){drag=null;save();render();} };
+async function jpeg(canvas) {
+  frameCanvas.getContext('2d').drawImage(canvas,0,0,480,270);
+  return new Promise(resolve=>frameCanvas.toBlob(resolve,'image/jpeg',.7));
+}
+async function mirrorImage(path, element) {
+  const response=await api(path);
+  if (response.status===204) return null;
+  if (!response.ok) throw new Error('Disconnected');
+  const url=URL.createObjectURL(await response.blob());
+  try {
+    const img=new Image();
+    img.src=url;
+    await img.decode();
+    if (element) {
+      const old = element.dataset.frameUrl;
+      element.src=url;
+      element.dataset.frameUrl=url;
+      if (old) URL.revokeObjectURL(old);
+    }
+    return img;
+  } finally { if (!element || element.dataset.frameUrl!==url) URL.revokeObjectURL(url); }
+}
+function loop(task, delay) {
+  async function tick() {
+    try { await task(); } catch (error) { console.debug(error.message); }
+    setTimeout(tick,delay);
+  }
+  tick();
+}
+$('mode').textContent=remote?'Remote control':'Android Studio';
+$('pair').hidden=remote;
+$('pip').hidden=remote||!android;
+$('pip').onclick=()=>android?.pictureInPicture();
+$('pv').style.display=remote?'none':'block';
+$('pg').style.display=remote?'none':'block';
+$('pvFeed').style.display=remote?'block':'none';
+$('pgFeed').style.display=remote?'block':'none';
+$('pair').onclick=() => {
+  const link=android?.remoteUrl();
+  if (!link) { report('Connect this phone to Wi-Fi to get a remote link.'); return; }
+  $('remoteLink').value=link; $('remoteDialog').showModal();
+};
+$('copy').onclick=()=>android?.copy($('remoteLink').value);
+$('closeDialog').onclick=()=>$('remoteDialog').close();
+$('take').onclick=()=>send({op:'take'});
+$('transition').onchange=()=>send({op:'transition',value:$('transition').value});
+$('record').onclick=()=>send({op:'record'});
+$('mic').onclick=()=>send({op:'mic'});
+$('mute').onclick=()=>send({op:'mute'});
+$('volume').onchange=()=>send({op:'volume',value:$('volume').value});
+$('addScene').onclick=()=>{ const value=prompt('Scene name','Scene '+(s.scenes.length+1)); if(value?.trim())send({op:'addScene',value}); };
+$('addSource').onclick=()=>{
+  const type=$('addType').value;
+  if (['video','image'].includes(type)) {
+    if (remote) { report('Choose local media on the Android phone.'); return; }
+    $('media').accept=type+'/*'; $('media').click();
+  } else send({op:'add',type});
+};
+$('media').onchange=event=>{
+  const file=event.target.files[0];
+  event.target.value='';
+  if (file) apply({op:'add',type:$('addType').value},file);
+};
+if (remote) {
+  $('status').textContent='Connecting';
+  loop(async()=>{
+    try {
+      const reply=await api('/state');
+      if (!reply.ok) throw new Error('Pairing failed');
+      const next=await reply.json();
+      if (!next.scenes?.length) return;
+      const {level:remoteLevel, ...project}=next;
+      $('level').style.width=remoteLevel+'%';
+      const signature=JSON.stringify(project);
+      if (signature!==syncSignature) {
+        if (!$('properties').contains(document.activeElement)) {
+          s=next; syncSignature=signature; render();
+        }
+        if (next.message) $('message').textContent=next.message;
+      }
+      statusTime=Date.now();
+      $('status').textContent='Connected'; $('status').className='good';
+    } catch(error) {
+      if (Date.now()-statusTime>3000) {
+        $('status').textContent='Disconnected'; $('status').className='';
+        if (error.message==='Pairing failed') report('Open the current Remote link from the phone.');
+      }
+    }
+  },220);
+  loop(async()=>{ await Promise.all([mirrorImage('/program',$('pgFeed')),mirrorImage('/preview',$('pvFeed'))]); },155);
+} else {
+  $('status').textContent='Local studio'; $('status').className='good';
+  render();
+  paint();
+  for (const item of s.scenes.flatMap(entry=>entry.sources)) {
+    if (['image','video'].includes(item.type)) mediaFile(item).catch(error=>report(error.message));
+  }
+  loop(async()=>{
+    const reply=await api('/commands');
+    for (const c of await reply.json()) if (c && typeof c==='object') await apply({...c,fromRemote:true});
+  },180);
+  loop(async()=>{ await api('/state','POST',JSON.stringify({...s,level,recording,mic:!!mic,message:currentError})); },180);
+  loop(async()=>{
+    const [pg,pv]=await Promise.all([jpeg($('pg')),jpeg($('pv'))]);
+    await Promise.all([api('/program','POST',pg),api('/preview','POST',pv)]);
+  },140);
+  loop(async()=>{
+    if (s.scenes.some(entry=>entry.sources.some(item=>item.type==='screen' && item.visible))) screenImage=await mirrorImage('/screen');
+  },90);
+}
+</script></body></html>

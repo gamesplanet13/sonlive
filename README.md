@@ -4,7 +4,7 @@ SonLive is an Android production studio with a browser remote. Its local web UI 
 
 ## Run
 
-1. Install SonLive on Android 10 or later. Keep the host phone awake with the studio open during production.
+1. Install SonLive on Android 10 or later. Keep the host phone awake with the studio visible during production. Tap Mini player to keep the Program canvas in Android Picture-in-Picture while switching to a game. For a clean picture, choose the game app in the system capture picker when Android offers app-only capture.
 2. Add a scene and layer text, color, images, local videos, camera or Android screen capture. Grant Android permissions on the host phone. Select a source to edit its size, position and opacity. Drag a selected layer on the host Preview canvas.
 3. Choose Cut or Fade and press Take to program. Enable the microphone before starting a recording to include microphone audio. Recordings are saved in Downloads/SonLive. Long recordings may hit a memory limit.
 4. Connect both devices to the same Wi-Fi. Tap Remote link in SonLive and open the full link in the other device's browser. The remote shows Preview and Program frames plus scene, source, mixer and recording controls. Reopen the current link after restarting the app. Local media is imported on the host phone.
